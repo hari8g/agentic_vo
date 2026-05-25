@@ -52,6 +52,7 @@ import { ITerminalService } from '../../../../../terminal/browser/terminal.js'
 import { ISearchService } from '../../../../../../services/search/common/search.js'
 import { IExtensionManagementService } from '../../../../../../../platform/extensionManagement/common/extensionManagement.js'
 import { IMCPService } from '../../../../common/mcpService.js';
+import { IJiraTicketService } from '../../../jiraTicketService.js';
 import { IStorageService, StorageScope } from '../../../../../../../platform/storage/common/storage.js'
 import { OPT_OUT_KEY } from '../../../../common/storageKeys.js'
 
@@ -227,6 +228,7 @@ const getReactAccessor = (accessor: ServicesAccessor) => {
 		IExtensionManagementService: accessor.get(IExtensionManagementService),
 		IExtensionTransferService: accessor.get(IExtensionTransferService),
 		IMCPService: accessor.get(IMCPService),
+		IJiraTicketService: accessor.get(IJiraTicketService),
 
 		IStorageService: accessor.get(IStorageService),
 
@@ -246,7 +248,7 @@ const _registerAccessor = (accessor: ServicesAccessor) => {
 // -- services --
 export const useAccessor = () => {
 	if (!reactAccessor_) {
-		throw new Error(`⚠️ Void useAccessor was called before _registerServices!`)
+		throw new Error(`⚠️ Agentic useAccessor was called before _registerServices!`)
 	}
 
 	return { get: <S extends keyof ReactAccessor,>(service: S): ReactAccessor[S] => reactAccessor_![service] }

@@ -38,8 +38,9 @@ async function getElectron() {
     await runProcess(npm, ['run', 'electron']);
 }
 async function ensureCompiled() {
-    if (!(await exists('out'))) {
-        await runProcess(npm, ['run', 'compile']);
+    if (!(await exists('out/main.js'))) {
+        // compile-client is enough for ./scripts/code.sh and uses less memory than full compile
+        await runProcess(npm, ['run', 'gulp', '--', 'compile-client']);
     }
 }
 async function main() {

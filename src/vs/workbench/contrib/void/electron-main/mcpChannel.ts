@@ -101,7 +101,7 @@ export class MCPChannel implements IServerChannel {
 				return response
 			}
 			else {
-				throw new Error(`Void sendLLM: command "${command}" not recognized.`)
+				throw new Error(`Agentic sendLLM: command "${command}" not recognized.`)
 			}
 		}
 		catch (e) {
@@ -169,9 +169,11 @@ export class MCPChannel implements IServerChannel {
 		let info: MCPServerNonError;
 
 		if (server.url) {
+			const url = typeof server.url === 'string' ? new URL(server.url) : server.url
+			const requestInit = this._getRequestInitForServer(server)
 			// first try HTTP, fall back to SSE
 			try {
-				transport = new StreamableHTTPClientTransport(server.url);
+				transport = new StreamableHTTPClientTransport(url, { requestInit });
 				await client.connect(transport);
 				console.log(`Connected via HTTP to ${serverName}`);
 				const { tools } = await client.listTools()
@@ -179,11 +181,11 @@ export class MCPChannel implements IServerChannel {
 				info = {
 					status: isOn ? 'success' : 'offline',
 					tools: toolsWithUniqueName,
-					command: server.url.toString(),
+					command: url.toString(),
 				}
 			} catch (httpErr) {
 				console.warn(`HTTP failed for ${serverName}, trying SSE…`, httpErr);
-				transport = new SSEClientTransport(server.url);
+				transport = new SSEClientTransport(url, { requestInit });
 				await client.connect(transport);
 				const { tools } = await client.listTools()
 				const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
@@ -191,7 +193,7 @@ export class MCPChannel implements IServerChannel {
 				info = {
 					status: isOn ? 'success' : 'offline',
 					tools: toolsWithUniqueName,
-					command: server.url.toString(),
+					command: url.toString(),
 				}
 			}
 		} else if (server.command) {
@@ -231,6 +233,16 @@ export class MCPChannel implements IServerChannel {
 
 	private _addUniquePrefix(base: string) {
 		return `${Math.random().toString(36).slice(2, 8)}_${base}`;
+	}
+
+	private _getRequestInitForServer(server: MCPConfigFileEntryJSON): RequestInit | undefined {
+		const headers: Record<string, string> = { ...(server.headers ?? {}) }
+		const email = server.env?.ATLASSIAN_EMAIL
+		const token = server.env?.ATLASSIAN_API_TOKEN
+		if (email && token) {
+			headers['Authorization'] = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`
+		}
+		return Object.keys(headers).length ? { headers } : undefined
 	}
 
 	private async _createClient(serverConfig: MCPConfigFileEntryJSON, serverName: string, isOn = true): Promise<ClientInfo> {

@@ -79,6 +79,11 @@ export interface IVoidSettingsService {
 	addMCPUserStateOfNames(userStateOfName: MCPUserStateOfName): Promise<void>;
 	removeMCPUserStateOfNames(serverNames: string[]): Promise<void>;
 	setMCPServerState(serverName: string, state: MCPUserState): Promise<void>;
+
+	/** Active Jira end-to-end run: auto-approve tools and auto-accept diffs for this thread only. */
+	isJiraE2EThread(threadId: string): boolean;
+	isAnyJiraE2EActive(): boolean;
+	setJiraE2EThread(threadId: string | null): void;
 }
 
 
@@ -233,6 +238,8 @@ class VoidSettingsService extends Disposable implements IVoidSettingsService {
 	readonly onDidChangeState: Event<void> = this._onDidChangeState.event; // this is primarily for use in react, so react can listen + update on state changes
 
 	state: VoidSettingsState;
+
+	private _jiraE2EThreadId: string | null = null
 
 	private readonly _resolver: () => void
 	waitForInitState: Promise<void> // await this if you need a valid state initially
@@ -607,6 +614,18 @@ class VoidSettingsService extends Disposable implements IVoidSettingsService {
 		}
 		await this._setMCPUserStateOfName(newMCPServerStates)
 		this._metricsService.capture('Update MCP Server State', { serverName, state });
+	}
+
+	isJiraE2EThread(threadId: string): boolean {
+		return this._jiraE2EThreadId === threadId
+	}
+
+	isAnyJiraE2EActive(): boolean {
+		return this._jiraE2EThreadId !== null
+	}
+
+	setJiraE2EThread(threadId: string | null): void {
+		this._jiraE2EThreadId = threadId
 	}
 
 }

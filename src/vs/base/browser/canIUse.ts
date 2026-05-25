@@ -29,7 +29,12 @@ export const BrowserFeatures = {
 		)
 	},
 	keyboard: (() => {
-		if (platform.isNative || browser.isStandalone()) {
+		// Navigator Keyboard Lock API is unreliable in Electron (InvalidStateError on lock()).
+		if (platform.isNative) {
+			return KeyboardSupport.None;
+		}
+
+		if (browser.isStandalone()) {
 			return KeyboardSupport.Always;
 		}
 

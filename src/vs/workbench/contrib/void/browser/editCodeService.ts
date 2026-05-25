@@ -279,12 +279,12 @@ class EditCodeService extends Disposable implements IEditCodeService {
 	// 	const details = errorDetails(e.fullError)
 	// 	this._notificationService.notify({
 	// 		severity: Severity.Warning,
-	// 		message: `Void Error: ${e.message}`,
+	// 		message: `Agentic Error: ${e.message}`,
 	// 		actions: {
 	// 			secondary: [{
 	// 				id: 'void.onerror.opensettings',
 	// 				enabled: true,
-	// 				label: `Open Void's settings`,
+	// 				label: `Open Agentic's settings`,
 	// 				tooltip: '',
 	// 				class: undefined,
 	// 				run: () => { this._commandService.executeCommand(VOID_OPEN_SETTINGS_ACTION_ID) }
@@ -585,7 +585,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 							offsetLines = 1
 						}
 					}
-					else { throw new Error('Void 1') }
+					else { throw new Error('Agentic 1') }
 
 					const buttonsWidget = this._instantiationService.createInstance(AcceptRejectInlineWidget, {
 						editor,
@@ -743,7 +743,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 		const elt: IUndoRedoElement = {
 			type: UndoRedoElementType.Resource,
 			resource: uri,
-			label: 'Void Agent',
+			label: 'Agentic Agent',
 			code: 'undoredo.editCode',
 			undo: async () => { opts?.onWillUndo?.(); await this._restoreVoidFileSnapshot(uri, beforeSnapshot) },
 			redo: async () => { if (afterSnapshot) await this._restoreVoidFileSnapshot(uri, afterSnapshot) }
@@ -997,7 +997,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			else if (lastDiff.type === 'deletion')
 				endLineInLlmTextSoFar = lastDiff.startLine
 			else
-				throw new Error(`Void: diff.type not recognized on: ${lastDiff}`)
+				throw new Error(`Agentic: diff.type not recognized on: ${lastDiff}`)
 		}
 
 		// at the start, add a newline between the stream and originalCode to make reasoning easier
@@ -1124,11 +1124,26 @@ class EditCodeService extends Disposable implements IEditCodeService {
 		return
 	}
 
+	public async revealFileInEditor(uri: URI): Promise<void> {
+		const editor = this._codeEditorService.getFocusedCodeEditor()
+			?? this._codeEditorService.getActiveCodeEditor()
+		await this._codeEditorService.openCodeEditor(
+			{ resource: uri, options: { revealIfOpened: true, preserveFocus: false, pinned: true } },
+			editor ?? null,
+		)
+	}
+
+	private _shouldAutoAcceptLLMChanges(): boolean {
+		return this._settingsService.state.globalSettings.autoAcceptLLMChanges
+			|| this._settingsService.isAnyJiraE2EActive()
+	}
+
 	public async callBeforeApplyOrEdit(givenURI: URI | 'current') {
 		const uri = this._uriOfGivenURI(givenURI)
 		if (!uri) return
 		await this._voidModelService.initializeModel(uri)
 		await this._voidModelService.saveModel(uri) // save the URI
+		await this.revealFileInEditor(uri)
 	}
 
 
@@ -1181,7 +1196,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			onFinishEdit()
 
 			// auto accept
-			if (this._settingsService.state.globalSettings.autoAcceptLLMChanges) {
+			if (this._shouldAutoAcceptLLMChanges()) {
 				this.acceptOrRejectAllDiffAreas({ uri, removeCtrlKs: false, behavior: 'accept' })
 			}
 		}
@@ -1225,7 +1240,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			onFinishEdit()
 
 			// auto accept
-			if (this._settingsService.state.globalSettings.autoAcceptLLMChanges) {
+			if (this._shouldAutoAcceptLLMChanges()) {
 				this.acceptOrRejectAllDiffAreas({ uri, removeCtrlKs: false, behavior: 'accept' })
 			}
 		}
@@ -1376,7 +1391,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			startRange = [startLine_, endLine_]
 		}
 		else {
-			throw new Error(`Void: diff.type not recognized on: ${from}`)
+			throw new Error(`Agentic: diff.type not recognized on: ${from}`)
 		}
 
 		const { model } = this._voidModelService.getModel(uri)
@@ -1460,7 +1475,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			onFinishEdit()
 
 			// auto accept
-			if (this._settingsService.state.globalSettings.autoAcceptLLMChanges) {
+			if (this._shouldAutoAcceptLLMChanges()) {
 				this.acceptOrRejectAllDiffAreas({ uri, removeCtrlKs: false, behavior: 'accept' })
 			}
 		}
@@ -1480,7 +1495,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			else if (from === 'ClickApply') {
 				return extractCodeFromRegular({ text: fullText, recentlyAddedTextLen })
 			}
-			throw new Error('Void 1')
+			throw new Error('Agentic 1')
 		}
 
 		// refresh now in case onText takes a while to get 1st message
@@ -1749,7 +1764,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			onFinishEdit()
 
 			// auto accept
-			if (this._settingsService.state.globalSettings.autoAcceptLLMChanges) {
+			if (this._shouldAutoAcceptLLMChanges()) {
 				this.acceptOrRejectAllDiffAreas({ uri, removeCtrlKs: false, behavior: 'accept' })
 			}
 		}
@@ -1968,7 +1983,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 
 						const blocks = extractSearchReplaceBlocks(fullText)
 						if (blocks.length === 0) {
-							this._notificationService.info(`Void: We ran Fast Apply, but the LLM didn't output any changes.`)
+							this._notificationService.info(`Agentic: We ran Fast Apply, but the LLM didn't output any changes.`)
 						}
 						this._writeURIText(uri, originalFileCode, 'wholeFileRange', { shouldRealignDiffAreas: true })
 
@@ -2158,7 +2173,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			].join('\n')
 		}
 		else {
-			throw new Error(`Void error: ${diff}.type not recognized`)
+			throw new Error(`Agentic error: ${diff}.type not recognized`)
 		}
 
 		// console.log('DIFF', diff)
@@ -2250,7 +2265,7 @@ class EditCodeService extends Disposable implements IEditCodeService {
 			toRange = { startLineNumber: diff.startLine, startColumn: 1, endLineNumber: diff.endLine, endColumn: Number.MAX_SAFE_INTEGER } // 1-indexed
 		}
 		else {
-			throw new Error(`Void error: ${diff}.type not recognized`)
+			throw new Error(`Agentic error: ${diff}.type not recognized`)
 		}
 
 		// update the file

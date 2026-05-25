@@ -7,6 +7,7 @@ node_modules/
 .vscode/extensions/**/out/
 extensions/**/dist/
 /out*/
+/src/out/
 /extensions/**/out/
 build/node_modules
 coverage/
@@ -21,6 +22,9 @@ vscode.db
 product.overrides.json
 *.snap.actual
 .vscode-test
+
+# Local MCP config (may contain API tokens)
+mcp.json
 
 # Void added these:
 .tmp/

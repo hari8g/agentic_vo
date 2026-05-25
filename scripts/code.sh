@@ -17,8 +17,18 @@ function code() {
 	cd "$ROOT"
 
 	if [[ "$OSTYPE" == "darwin"* ]]; then
+		ELECTRON_DIR="./.build/electron"
 		NAME=`node -p "require('./product.json').nameLong"`
-		CODE="./.build/electron/$NAME.app/Contents/MacOS/Electron"
+		if [[ -x "$ELECTRON_DIR/$NAME.app/Contents/MacOS/Electron" ]]; then
+			CODE="$ELECTRON_DIR/$NAME.app/Contents/MacOS/Electron"
+		else
+			APP_BUNDLE=$(find "$ELECTRON_DIR" -maxdepth 1 -name '*.app' -type d 2>/dev/null | head -1)
+			if [[ -z "$APP_BUNDLE" || ! -x "$APP_BUNDLE/Contents/MacOS/Electron" ]]; then
+				echo "Error: No Electron app in $ELECTRON_DIR. Run: npm run electron" >&2
+				exit 1
+			fi
+			CODE="$APP_BUNDLE/Contents/MacOS/Electron"
+		fi
 	else
 		NAME=`node -p "require('./product.json').applicationName"`
 		CODE=".build/electron/$NAME"

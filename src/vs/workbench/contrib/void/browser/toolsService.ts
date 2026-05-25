@@ -19,6 +19,7 @@ import { RawToolParamsObj } from '../common/sendLLMMessageTypes.js'
 import { MAX_CHILDREN_URIs_PAGE, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME } from '../common/prompt/prompts.js'
 import { IVoidSettingsService } from '../common/voidSettingsService.js'
 import { generateUuid } from '../../../../base/common/uuid.js'
+import { resolveExistingToolFileUri, resolveToolFileUri } from '../common/toolUriResolver.js'
 
 
 // tool use for AI
@@ -38,38 +39,20 @@ const validateStr = (argName: string, value: unknown) => {
 }
 
 
-// We are NOT checking to make sure in workspace
-const validateURI = (uriStr: unknown) => {
+const validateURI = (uriStr: unknown, workspaceContextService: IWorkspaceContextService) => {
 	if (uriStr === null) throw new Error(`Invalid LLM output: uri was null.`)
 	if (typeof uriStr !== 'string') throw new Error(`Invalid LLM output format: Provided uri must be a string, but it's a(n) ${typeof uriStr}. Full value: ${JSON.stringify(uriStr)}.`)
 
-	// Check if it's already a full URI with scheme (e.g., vscode-remote://, file://, etc.)
-	// Look for :// pattern which indicates a scheme is present
-	// Examples of supported URIs:
-	// - vscode-remote://wsl+Ubuntu/home/user/file.txt (WSL)
-	// - vscode-remote://ssh-remote+myserver/home/user/file.txt (SSH)
-	// - file:///home/user/file.txt (local file with scheme)
-	// - /home/user/file.txt (local file path, will be converted to file://)
-	// - C:\Users\file.txt (Windows local path, will be converted to file://)
-	if (uriStr.includes('://')) {
-		try {
-			const uri = URI.parse(uriStr)
-			return uri
-		} catch (e) {
-			// If parsing fails, it's a malformed URI
-			throw new Error(`Invalid URI format: ${uriStr}. Error: ${e}`)
-		}
-	} else {
-		// No scheme present, treat as file path
-		// This handles regular file paths like /home/user/file.txt or C:\Users\file.txt
-		const uri = URI.file(uriStr)
-		return uri
+	try {
+		return resolveToolFileUri(uriStr, workspaceContextService)
+	} catch (e) {
+		throw new Error(`Invalid URI format: ${uriStr}. Error: ${e}`)
 	}
 }
 
-const validateOptionalURI = (uriStr: unknown) => {
+const validateOptionalURI = (uriStr: unknown, workspaceContextService: IWorkspaceContextService) => {
 	if (isFalsy(uriStr)) return null
-	return validateURI(uriStr)
+	return validateURI(uriStr, workspaceContextService)
 }
 
 const validateOptionalStr = (argName: string, str: unknown) => {
@@ -142,8 +125,8 @@ export class ToolsService implements IToolsService {
 	public stringOfResult: BuiltinToolResultToString;
 
 	constructor(
-		@IFileService fileService: IFileService,
-		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
+		@IFileService private readonly fileService: IFileService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@ISearchService searchService: ISearchService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IVoidModelService voidModelService: IVoidModelService,
@@ -155,11 +138,14 @@ export class ToolsService implements IToolsService {
 		@IVoidSettingsService private readonly voidSettingsService: IVoidSettingsService,
 	) {
 		const queryBuilder = instantiationService.createInstance(QueryBuilder);
+		const resolveURI = (uriStr: unknown) => validateURI(uriStr, this.workspaceContextService)
+		const resolveOptionalURI = (uriStr: unknown) => validateOptionalURI(uriStr, this.workspaceContextService)
+		const ensureFileUri = (uri: URI) => resolveExistingToolFileUri(uri, this.workspaceContextService, this.fileService)
 
 		this.validateParams = {
 			read_file: (params: RawToolParamsObj) => {
 				const { uri: uriStr, start_line: startLineUnknown, end_line: endLineUnknown, page_number: pageNumberUnknown } = params
-				const uri = validateURI(uriStr)
+				const uri = resolveURI(uriStr)
 				const pageNumber = validatePageNum(pageNumberUnknown)
 
 				let startLine = validateNumber(startLineUnknown, { default: null })
@@ -173,13 +159,13 @@ export class ToolsService implements IToolsService {
 			ls_dir: (params: RawToolParamsObj) => {
 				const { uri: uriStr, page_number: pageNumberUnknown } = params
 
-				const uri = validateURI(uriStr)
+				const uri = resolveURI(uriStr)
 				const pageNumber = validatePageNum(pageNumberUnknown)
 				return { uri, pageNumber }
 			},
 			get_dir_tree: (params: RawToolParamsObj) => {
 				const { uri: uriStr, } = params
-				const uri = validateURI(uriStr)
+				const uri = resolveURI(uriStr)
 				return { uri }
 			},
 			search_pathnames_only: (params: RawToolParamsObj) => {
@@ -205,7 +191,7 @@ export class ToolsService implements IToolsService {
 				} = params
 				const queryStr = validateStr('query', queryUnknown)
 				const pageNumber = validatePageNum(pageNumberUnknown)
-				const searchInFolder = validateOptionalURI(searchInFolderUnknown)
+				const searchInFolder = resolveOptionalURI(searchInFolderUnknown)
 				const isRegex = validateBoolean(isRegexUnknown, { default: false })
 				return {
 					query: queryStr,
@@ -216,7 +202,7 @@ export class ToolsService implements IToolsService {
 			},
 			search_in_file: (params: RawToolParamsObj) => {
 				const { uri: uriStr, query: queryUnknown, is_regex: isRegexUnknown } = params;
-				const uri = validateURI(uriStr);
+				const uri = resolveURI(uriStr);
 				const query = validateStr('query', queryUnknown);
 				const isRegex = validateBoolean(isRegexUnknown, { default: false });
 				return { uri, query, isRegex };
@@ -226,7 +212,7 @@ export class ToolsService implements IToolsService {
 				const {
 					uri: uriUnknown,
 				} = params
-				const uri = validateURI(uriUnknown)
+				const uri = resolveURI(uriUnknown)
 				return { uri }
 			},
 
@@ -234,7 +220,7 @@ export class ToolsService implements IToolsService {
 
 			create_file_or_folder: (params: RawToolParamsObj) => {
 				const { uri: uriUnknown } = params
-				const uri = validateURI(uriUnknown)
+				const uri = resolveURI(uriUnknown)
 				const uriStr = validateStr('uri', uriUnknown)
 				const isFolder = checkIfIsFolder(uriStr)
 				return { uri, isFolder }
@@ -242,7 +228,7 @@ export class ToolsService implements IToolsService {
 
 			delete_file_or_folder: (params: RawToolParamsObj) => {
 				const { uri: uriUnknown, is_recursive: isRecursiveUnknown } = params
-				const uri = validateURI(uriUnknown)
+				const uri = resolveURI(uriUnknown)
 				const isRecursive = validateBoolean(isRecursiveUnknown, { default: false })
 				const uriStr = validateStr('uri', uriUnknown)
 				const isFolder = checkIfIsFolder(uriStr)
@@ -251,14 +237,14 @@ export class ToolsService implements IToolsService {
 
 			rewrite_file: (params: RawToolParamsObj) => {
 				const { uri: uriStr, new_content: newContentUnknown } = params
-				const uri = validateURI(uriStr)
+				const uri = resolveURI(uriStr)
 				const newContent = validateStr('newContent', newContentUnknown)
 				return { uri, newContent }
 			},
 
 			edit_file: (params: RawToolParamsObj) => {
 				const { uri: uriStr, search_replace_blocks: searchReplaceBlocksUnknown } = params
-				const uri = validateURI(uriStr)
+				const uri = resolveURI(uriStr)
 				const searchReplaceBlocks = validateStr('searchReplaceBlocks', searchReplaceBlocksUnknown)
 				return { uri, searchReplaceBlocks }
 			},
@@ -295,6 +281,8 @@ export class ToolsService implements IToolsService {
 
 		this.callTool = {
 			read_file: async ({ uri, startLine, endLine, pageNumber }) => {
+				uri = await ensureFileUri(uri)
+				await editCodeService.revealFileInEditor(uri)
 				await voidModelService.initializeModel(uri)
 				const { model } = await voidModelService.getModelSafe(uri)
 				if (model === null) { throw new Error(`No contents; File does not exist.`) }
@@ -320,18 +308,20 @@ export class ToolsService implements IToolsService {
 			},
 
 			ls_dir: async ({ uri, pageNumber }) => {
-				const dirResult = await computeDirectoryTree1Deep(fileService, uri, pageNumber)
+				uri = await ensureFileUri(uri)
+				const dirResult = await computeDirectoryTree1Deep(this.fileService, uri, pageNumber)
 				return { result: dirResult }
 			},
 
 			get_dir_tree: async ({ uri }) => {
+				uri = await ensureFileUri(uri)
 				const str = await this.directoryStrService.getDirectoryStrTool(uri)
 				return { result: { str } }
 			},
 
 			search_pathnames_only: async ({ query: queryStr, includePattern, pageNumber }) => {
 
-				const query = queryBuilder.file(workspaceContextService.getWorkspace().folders.map(f => f.uri), {
+				const query = queryBuilder.file(this.workspaceContextService.getWorkspace().folders.map(f => f.uri), {
 					filePattern: queryStr,
 					includePattern: includePattern ?? undefined,
 					sortByScore: true, // makes results 10x better
@@ -350,7 +340,7 @@ export class ToolsService implements IToolsService {
 
 			search_for_files: async ({ query: queryStr, isRegex, searchInFolder, pageNumber }) => {
 				const searchFolders = searchInFolder === null ?
-					workspaceContextService.getWorkspace().folders.map(f => f.uri)
+					this.workspaceContextService.getWorkspace().folders.map(f => f.uri)
 					: [searchInFolder]
 
 				const query = queryBuilder.text({
@@ -370,6 +360,7 @@ export class ToolsService implements IToolsService {
 				return { result: { queryStr, uris, hasNextPage } }
 			},
 			search_in_file: async ({ uri, query, isRegex }) => {
+				uri = await ensureFileUri(uri)
 				await voidModelService.initializeModel(uri);
 				const { model } = await voidModelService.getModelSafe(uri);
 				if (model === null) { throw new Error(`No contents; File does not exist.`); }
@@ -389,6 +380,7 @@ export class ToolsService implements IToolsService {
 			},
 
 			read_lint_errors: async ({ uri }) => {
+				uri = await ensureFileUri(uri)
 				await timeout(1000)
 				const { lintErrors } = this._getLintErrors(uri)
 				return { result: { lintErrors } }
@@ -397,20 +389,23 @@ export class ToolsService implements IToolsService {
 			// ---
 
 			create_file_or_folder: async ({ uri, isFolder }) => {
+				uri = await ensureFileUri(uri)
 				if (isFolder)
-					await fileService.createFolder(uri)
+					await this.fileService.createFolder(uri)
 				else {
-					await fileService.createFile(uri)
+					await this.fileService.createFile(uri)
 				}
 				return { result: {} }
 			},
 
 			delete_file_or_folder: async ({ uri, isRecursive }) => {
-				await fileService.del(uri, { recursive: isRecursive })
+				uri = await ensureFileUri(uri)
+				await this.fileService.del(uri, { recursive: isRecursive })
 				return { result: {} }
 			},
 
 			rewrite_file: async ({ uri, newContent }) => {
+				uri = await ensureFileUri(uri)
 				await voidModelService.initializeModel(uri)
 				if (this.commandBarService.getStreamState(uri) === 'streaming') {
 					throw new Error(`Another LLM is currently making changes to this file. Please stop streaming for now and ask the user to resume later.`)
@@ -427,6 +422,7 @@ export class ToolsService implements IToolsService {
 			},
 
 			edit_file: async ({ uri, searchReplaceBlocks }) => {
+				uri = await ensureFileUri(uri)
 				await voidModelService.initializeModel(uri)
 				if (this.commandBarService.getStreamState(uri) === 'streaming') {
 					throw new Error(`Another LLM is currently making changes to this file. Please stop streaming for now and ask the user to resume later.`)
@@ -538,7 +534,7 @@ export class ToolsService implements IToolsService {
 				}
 				// normal command
 				if (resolveReason.type === 'timeout') {
-					return `${result_}\nTerminal command ran, but was automatically killed by Void after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity and did not finish successfully. To try with more time, open a persistent terminal and run the command there.`
+					return `${result_}\nTerminal command ran, but was automatically killed by Agentic after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity and did not finish successfully. To try with more time, open a persistent terminal and run the command there.`
 				}
 				throw new Error(`Unexpected internal error: Terminal command did not resolve with a valid reason.`)
 			},

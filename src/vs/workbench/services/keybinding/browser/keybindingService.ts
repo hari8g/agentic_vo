@@ -20,7 +20,7 @@ import { Keybinding, KeyCodeChord, ResolvedKeybinding, ScanCodeChord } from '../
 import { IMMUTABLE_CODE_TO_KEY_CODE, KeyCode, KeyCodeUtils, KeyMod, ScanCode, ScanCodeUtils } from '../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import * as objects from '../../../../base/common/objects.js';
-import { isMacintosh, OperatingSystem, OS } from '../../../../base/common/platform.js';
+import { isMacintosh, isNative, OperatingSystem, OS } from '../../../../base/common/platform.js';
 import { dirname } from '../../../../base/common/resources.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 
@@ -248,22 +248,48 @@ export class WorkbenchKeybindingService extends AbstractKeybindingService {
 				return;
 			}
 
-			const keyboard: IKeyboard | null = (<INavigatorWithKeyboard>navigator).keyboard;
-
-			if (BrowserFeatures.keyboard === KeyboardSupport.None) {
-				return;
-			}
-
-			if (browser.isFullscreen(mainWindow)) {
-				keyboard?.lock(['Escape']);
-			} else {
-				keyboard?.unlock();
-			}
+			this._syncNavigatorKeyboardLockForFullscreen();
 
 			// update resolver which will bring back all unbound keyboard shortcuts
 			this._cachedResolver = null;
 			this._onDidUpdateKeybindings.fire();
 		}));
+	}
+
+	/**
+	 * Navigator Keyboard Lock API (keyboard.lock). In Electron/desktop this often rejects with
+	 * InvalidStateError ("lock() request could not be registered") when fullscreen toggles.
+	 */
+	private _syncNavigatorKeyboardLockForFullscreen(): void {
+		if (BrowserFeatures.keyboard === KeyboardSupport.None) {
+			return;
+		}
+
+		// Desktop Electron: API is flaky and not needed for normal VS Code fullscreen behavior.
+		if (isNative) {
+			return;
+		}
+
+		const keyboard: IKeyboard | null = (<INavigatorWithKeyboard>navigator).keyboard;
+		if (!keyboard?.lock) {
+			return;
+		}
+
+		if (mainWindow.document.visibilityState !== 'visible' || !mainWindow.document.hasFocus()) {
+			return;
+		}
+
+		if (browser.isFullscreen(mainWindow)) {
+			void keyboard.lock(['Escape']).catch(() => {
+				// InvalidStateError / AbortError: inactive context or overlapping lock() calls
+			});
+		} else {
+			try {
+				keyboard.unlock();
+			} catch {
+				// ignore if unlock is not allowed
+			}
+		}
 	}
 
 	private _registerKeyListeners(window: Window): IDisposable {

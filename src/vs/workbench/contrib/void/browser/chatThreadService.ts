@@ -32,12 +32,15 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { truncate } from '../../../../base/common/strings.js';
 import { THREAD_STORAGE_KEY } from '../common/storageKeys.js';
 import { IConvertToLLMMessageService } from './convertToLLMMessageService.js';
+import { JIRA_WORKFLOW_COMPLETE_MARKER, JiraWorkflowPhase, JiraWorkflowState, LinkedJiraIssue } from '../common/jiraTypes.js';
+import { formatRequirementsForUI, JIRA_PLAN_UI_MAX, stripJiraWorkflowMarkers, summarizePlanForPrompt, truncateForPrompt } from '../common/jiraTextUtils.js';
 import { timeout } from '../../../../base/common/async.js';
 import { deepClone } from '../../../../base/common/objects.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IDirectoryStrService } from '../common/directoryStrService.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IMCPService } from '../common/mcpService.js';
+import { IJiraTicketService } from './jiraTicketService.js';
 import { RawMCPToolCall } from '../common/mcpServiceTypes.js';
 
 
@@ -132,6 +135,8 @@ export type ThreadType = {
 			}
 		}
 
+		linkedJiraIssue?: LinkedJiraIssue
+		jiraWorkflow?: JiraWorkflowState
 
 		mountedInfo?: {
 			whenMounted: Promise<WhenMounted>
@@ -250,6 +255,9 @@ export interface IChatThreadService {
 	setCurrentMessageState: (messageIdx: number, newState: Partial<UserMessageState>) => void
 	getCurrentThreadState: () => ThreadType['state']
 	setCurrentThreadState: (newState: Partial<ThreadType['state']>) => void
+	setLinkedJiraIssue: (threadId: string, issue: LinkedJiraIssue | undefined) => void
+	startJiraPlanning: (threadId: string, issue: LinkedJiraIssue) => Promise<void>
+	approveJiraPlanAndExecute: (threadId: string) => Promise<void>
 
 	// you can edit multiple messages - the one you're currently editing is "focused", and we add items to that one when you press cmd+L.
 	getCurrentFocusedMessageIdx(): number | undefined;
@@ -327,6 +335,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IDirectoryStrService private readonly _directoryStringService: IDirectoryStrService,
 		@IFileService private readonly _fileService: IFileService,
 		@IMCPService private readonly _mcpService: IMCPService,
+		@IJiraTicketService private readonly _jiraTicketService: IJiraTicketService,
 	) {
 		super()
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string } // default state
@@ -443,11 +452,11 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			// set streamState
 			const messages = newState.allThreads[threadId]?.messages
 			const lastMessage = messages && messages[messages.length - 1]
-			// if awaiting user but stream state doesn't indicate it (happens if restart Void)
+			// if awaiting user but stream state doesn't indicate it (happens if restart Agentic)
 			if (lastMessage && lastMessage.role === 'tool' && lastMessage.type === 'tool_request')
 				this._setStreamState(threadId, { isRunning: 'awaiting_user', })
 
-			// if running now but stream state doesn't indicate it (happens if restart Void), cancel that last tool
+			// if running now but stream state doesn't indicate it (happens if restart Agentic), cancel that last tool
 			if (lastMessage && lastMessage.role === 'tool' && lastMessage.type === 'running_now') {
 
 				this._updateLatestTool(threadId, { role: 'tool', type: 'rejected', content: lastMessage.content, id: lastMessage.id, rawParams: lastMessage.rawParams, result: null, name: lastMessage.name, params: lastMessage.params, mcpServerName: lastMessage.mcpServerName })
@@ -585,6 +594,13 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		if (typeof interrupt === 'function')
 			interrupt()
 
+		if (this._settingsService.isJiraE2EThread(threadId)) {
+			this._settingsService.setJiraE2EThread(null)
+			const wf = thread.state.jiraWorkflow
+			if (wf?.phase === 'executing' && wf.planMarkdown) {
+				this._setThreadState(threadId, { jiraWorkflow: { phase: 'awaiting_plan_approval', planMarkdown: wf.planMarkdown } })
+			}
+		}
 
 		this._setStreamState(threadId, undefined)
 	}
@@ -644,6 +660,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			const approvalType = isBuiltInTool ? approvalTypeOfBuiltinToolName[toolName] : 'MCP tools'
 			if (approvalType) {
 				const autoApprove = this._settingsService.state.globalSettings.autoApprove[approvalType]
+					|| this._settingsService.isJiraE2EThread(threadId)
 				// add a tool_request because we use it for UI if a tool is loading (this should be improved in the future)
 				this._addMessageToThread(threadId, { role: 'tool', type: 'tool_request', content: '(Awaiting user permission...)', result: null, name: toolName, params: toolParams, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
 				if (!autoApprove) {
@@ -777,10 +794,14 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			this._setStreamState(threadId, { isRunning: 'idle', interrupt: idleInterruptor })
 
 			const chatMessages = this.state.allThreads[threadId]?.messages ?? []
+			const threadState = this.state.allThreads[threadId]?.state
+			const jiraWorkflowPhase = this._jiraWorkflowPhaseForPrompt(threadState?.jiraWorkflow?.phase)
 			const { messages, separateSystemMessage } = await this._convertToLLMMessagesService.prepareLLMChatMessages({
 				chatMessages,
 				modelSelection,
-				chatMode
+				chatMode,
+				linkedJiraIssue: threadState?.linkedJiraIssue,
+				jiraWorkflowPhase,
 			})
 
 			if (interruptedWhenIdle) {
@@ -896,6 +917,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 					this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' }) // just decorative, for clarity
 				}
+				else {
+					this._handleJiraWorkflowAfterAssistantMessage(threadId, info.fullText)
+				}
 
 			} // end while (attempts)
 		} // end while (send message)
@@ -904,7 +928,10 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		this._setStreamState(threadId, { isRunning: isRunningWhenEnd })
 
 		// add checkpoint before the next user message
-		if (!isRunningWhenEnd) this._addUserCheckpoint({ threadId })
+		if (!isRunningWhenEnd) {
+			this._addUserCheckpoint({ threadId })
+			await this._maybeFinalizeJiraOnRunEnd(threadId)
+		}
 
 		// capture number of messages sent
 		this._metricsService.capture('Agent Loop Done', { nMessagesSent, chatMode })
@@ -1862,6 +1889,152 @@ We only need to do it for files that were edited since `from`, ie files between 
 	}
 	setCurrentThreadState = (newState: Partial<ThreadType['state']>) => {
 		this._setThreadState(this.state.currentThreadId, newState)
+	}
+
+	setLinkedJiraIssue = (threadId: string, issue: LinkedJiraIssue | undefined) => {
+		if (!issue) {
+			if (this._settingsService.isJiraE2EThread(threadId)) {
+				this._settingsService.setJiraE2EThread(null)
+			}
+			this._setThreadState(threadId, { linkedJiraIssue: undefined, jiraWorkflow: undefined })
+			return
+		}
+		this._setThreadState(threadId, { linkedJiraIssue: issue })
+	}
+
+	startJiraPlanning = async (threadId: string, issue: LinkedJiraIssue) => {
+		if (this._settingsService.isJiraE2EThread(threadId)) {
+			this._settingsService.setJiraE2EThread(null)
+		}
+		this._setThreadState(threadId, {
+			linkedJiraIssue: issue,
+			jiraWorkflow: {
+				phase: 'planning',
+				requirementsSummary: formatRequirementsForUI(issue.description),
+			},
+		})
+		if (this._settingsService.state.globalSettings.chatMode !== 'agent') {
+			await this._settingsService.setGlobalSetting('chatMode', 'agent')
+		}
+		const userMessage = this._jiraTicketService.buildPlanTicketUserMessage(issue)
+		await this.addUserMessageAndStreamResponse({ userMessage, threadId })
+	}
+
+	approveJiraPlanAndExecute = async (threadId: string) => {
+		const thread = this.state.allThreads[threadId]
+		const issue = thread?.state.linkedJiraIssue
+		const wf = thread?.state.jiraWorkflow
+		if (!issue || wf?.phase !== 'awaiting_plan_approval' || !wf.planMarkdown) {
+			throw new Error('No approved Jira plan ready. Run "Plan implementation" first and wait for the plan.')
+		}
+		this._setThreadState(threadId, {
+			jiraWorkflow: {
+				phase: 'executing',
+				planMarkdown: wf.planMarkdown,
+				planSummary: wf.planSummary ?? summarizePlanForPrompt(wf.planMarkdown),
+				requirementsSummary: wf.requirementsSummary,
+			},
+		})
+		this._settingsService.setJiraE2EThread(threadId)
+		if (this._settingsService.state.globalSettings.chatMode !== 'agent') {
+			await this._settingsService.setGlobalSetting('chatMode', 'agent')
+		}
+		const userMessage = this._jiraTicketService.buildExecuteAfterApprovalMessage(issue, wf.planMarkdown)
+		await this.addUserMessageAndStreamResponse({ userMessage, threadId })
+	}
+
+	private _jiraWorkflowPhaseForPrompt(phase: JiraWorkflowPhase | undefined): JiraWorkflowPhase | undefined {
+		if (phase === 'planning' || phase === 'executing') return phase
+		return undefined
+	}
+
+	private _handleJiraWorkflowAfterAssistantMessage(threadId: string, fullText: string) {
+		const thread = this.state.allThreads[threadId]
+		const wf = thread?.state.jiraWorkflow
+		if (!wf) return
+
+		if (wf.phase === 'planning') {
+			const planMarkdown = truncateForPrompt(stripJiraWorkflowMarkers(fullText), JIRA_PLAN_UI_MAX)
+			const planSummary = summarizePlanForPrompt(planMarkdown)
+			this._setThreadState(threadId, {
+				jiraWorkflow: {
+					phase: 'awaiting_plan_approval',
+					planMarkdown,
+					planSummary,
+					requirementsSummary: wf.requirementsSummary,
+				},
+			})
+			return
+		}
+
+		if (wf.phase === 'executing' && fullText.includes(JIRA_WORKFLOW_COMPLETE_MARKER)) {
+			void this._finalizeJiraWorkflow(threadId, this._buildJiraCompletionSummary(threadId, fullText))
+		}
+	}
+
+	private _buildJiraCompletionSummary(threadId: string, lastAssistantText?: string): string {
+		const thread = this.state.allThreads[threadId]
+		const issue = thread?.state.linkedJiraIssue
+		const parts: string[] = [
+			'## Agentic agent — implementation complete',
+			issue ? `Ticket: *${issue.key}* — ${issue.summary}` : '',
+			'',
+		]
+		if (lastAssistantText) {
+			parts.push(stripJiraWorkflowMarkers(lastAssistantText))
+		} else {
+			const assistants = (thread?.messages ?? []).filter(m => m.role === 'assistant')
+			const last = assistants[assistants.length - 1]
+			if (last && last.role === 'assistant') {
+				parts.push(stripJiraWorkflowMarkers(last.displayContent))
+			}
+		}
+		return truncateForPrompt(parts.filter(Boolean).join('\n'), 4000)
+	}
+
+	private async _finalizeJiraWorkflow(threadId: string, commentMarkdown: string) {
+		const thread = this.state.allThreads[threadId]
+		const issue = thread?.state.linkedJiraIssue
+		const wf = thread?.state.jiraWorkflow
+		if (!issue || !wf || wf.jiraFinalizeStatus === 'success' || wf.jiraFinalizeStatus === 'pending') return
+
+		this._setThreadState(threadId, {
+			jiraWorkflow: { ...wf, jiraFinalizeStatus: 'pending', jiraFinalizeMessage: 'Updating Jira…' },
+		})
+
+		let success = false
+		let message = ''
+		try {
+			const result = await this._jiraTicketService.finalizeTicket(issue, { commentMarkdown })
+			success = result.success
+			message = result.message
+		} catch (e) {
+			message = e instanceof Error ? e.message : String(e)
+		}
+
+		this._settingsService.setJiraE2EThread(null)
+		this._setThreadState(threadId, {
+			jiraWorkflow: {
+				...wf,
+				phase: success ? 'completed' : 'executing',
+				jiraFinalizeStatus: success ? 'success' : 'error',
+				jiraFinalizeMessage: message,
+			},
+		})
+
+		if (!success) {
+			this._notificationService.notify({
+				severity: Severity.Warning,
+				message: `Jira update failed for ${issue.key}: ${message}`,
+			})
+		}
+	}
+
+	private async _maybeFinalizeJiraOnRunEnd(threadId: string) {
+		const thread = this.state.allThreads[threadId]
+		const wf = thread?.state.jiraWorkflow
+		if (!wf || wf.phase !== 'executing' || wf.jiraFinalizeStatus === 'success') return
+		await this._finalizeJiraWorkflow(threadId, this._buildJiraCompletionSummary(threadId))
 	}
 
 	// gets `staging` and `setStaging` of the currently focused element, given the index of the currently selected message (or undefined if no message is selected)

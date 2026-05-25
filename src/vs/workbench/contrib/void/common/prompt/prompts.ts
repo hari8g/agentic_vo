@@ -11,6 +11,8 @@ import { os } from '../helpers/systemInfo.js';
 import { RawToolParamsObj } from '../sendLLMMessageTypes.js';
 import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolName, BuiltinToolResultType, ToolName } from '../toolsServiceTypes.js';
 import { ChatMode } from '../voidSettingsTypes.js';
+import { JIRA_WORKFLOW_COMPLETE_MARKER, JiraWorkflowPhase, LinkedJiraIssue } from '../jiraTypes.js';
+import { formatRequirementsForUI, JIRA_DESC_PROMPT_MAX, truncateForPrompt } from '../jiraTextUtils.js';
 
 // Triple backtick wrapper used throughout the prompts for code blocks
 export const tripleTick = ['```', '```']
@@ -154,7 +156,7 @@ export type InternalToolInfo = {
 
 
 const uriParam = (object: string) => ({
-	uri: { description: `The FULL path to the ${object}.` }
+	uri: { description: `Path to the ${object}. Use the absolute filesystem path, or a path relative to the workspace root (e.g. backend/app/models.py or /backend/app/models.py). Do NOT use bare paths like /backend/... unless they are under the open workspace.` }
 })
 
 const paginationParam = {
@@ -358,15 +360,23 @@ export const isABuiltinToolName = (toolName: string): toolName is BuiltinToolNam
 
 
 
-export const availableTools = (chatMode: ChatMode | null, mcpTools: InternalToolInfo[] | undefined) => {
+const jiraPlanningBuiltinTools: BuiltinToolName[] = [
+	'read_file', 'ls_dir', 'get_dir_tree', 'search_pathnames_only', 'search_for_files', 'search_in_file', 'read_lint_errors',
+]
 
-	const builtinToolNames: BuiltinToolName[] | undefined = chatMode === 'normal' ? undefined
+export const availableTools = (chatMode: ChatMode | null, mcpTools: InternalToolInfo[] | undefined, jiraWorkflowPhase?: JiraWorkflowPhase) => {
+
+	let builtinToolNames: BuiltinToolName[] | undefined = chatMode === 'normal' ? undefined
 		: chatMode === 'gather' ? (Object.keys(builtinTools) as BuiltinToolName[]).filter(toolName => !(toolName in approvalTypeOfBuiltinToolName))
 			: chatMode === 'agent' ? Object.keys(builtinTools) as BuiltinToolName[]
 				: undefined
 
+	if (jiraWorkflowPhase === 'planning' && builtinToolNames) {
+		builtinToolNames = builtinToolNames.filter(n => jiraPlanningBuiltinTools.includes(n))
+	}
+
 	const effectiveBuiltinTools = builtinToolNames?.map(toolName => builtinTools[toolName]) ?? undefined
-	const effectiveMCPTools = chatMode === 'agent' ? mcpTools : undefined
+	const effectiveMCPTools = (chatMode === 'agent' && jiraWorkflowPhase !== 'planning') ? mcpTools : undefined
 
 	const tools: InternalToolInfo[] | undefined = !(builtinToolNames || mcpTools) ? undefined
 		: [
@@ -399,8 +409,8 @@ export const reParsedToolXMLString = (toolName: ToolName, toolParams: RawToolPar
 
 /* We expect tools to come at the end - not a hard limit, but that's just how we process them, and the flow makes more sense that way. */
 // - You are allowed to call multiple tools by specifying them consecutively. However, there should be NO text or writing between tool calls or after them.
-const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined) => {
-	const tools = availableTools(chatMode, mcpTools)
+const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, jiraWorkflowPhase?: JiraWorkflowPhase) => {
+	const tools = availableTools(chatMode, mcpTools, jiraWorkflowPhase)
 	if (!tools || tools.length === 0) return null
 
 	const toolXMLDefinitions = (`\
@@ -425,7 +435,7 @@ const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] |
 // ======================================================== chat (normal, gather, agent) ========================================================
 
 
-export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean }) => {
+export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, linkedJiraIssue, jiraWorkflowPhase }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, linkedJiraIssue?: LinkedJiraIssue, jiraWorkflowPhase?: JiraWorkflowPhase }) => {
 	const header = (`You are an expert coding ${mode === 'agent' ? 'agent' : 'assistant'} whose job is \
 ${mode === 'agent' ? `to help the user develop, run, and make changes to their codebase.`
 			: mode === 'gather' ? `to search, understand, and reference files in the user's codebase.`
@@ -459,7 +469,7 @@ ${directoryStr}
 </files_overview>`)
 
 
-	const toolDefinitions = includeXMLToolDefinitions ? systemToolsXMLPrompt(mode, mcpTools) : null
+	const toolDefinitions = includeXMLToolDefinitions ? systemToolsXMLPrompt(mode, mcpTools, jiraWorkflowPhase) : null
 
 	const details: string[] = []
 
@@ -482,6 +492,25 @@ ${directoryStr}
 		details.push(`You will OFTEN need to gather context before making a change. Do not immediately make a change unless you have ALL relevant context.`)
 		details.push(`ALWAYS have maximal certainty in a change BEFORE you make it. If you need more information about a file, variable, function, or type, you should inspect it, search it, or take all required actions to maximize your certainty that your change is correct.`)
 		details.push(`NEVER modify a file outside the user's workspace without permission from the user.`)
+		if (linkedJiraIssue && jiraWorkflowPhase === 'planning') {
+			details.push(`JIRA PLANNING PHASE for ticket ${linkedJiraIssue.key}: Produce an implementation plan ONLY. Do NOT edit files, run terminal commands, or use Jira write tools.`)
+			details.push(`Your plan MUST include: (1) understanding of requirements, (2) files/modules to change, (3) step-by-step implementation order, (4) testing/verification, (5) Jira updates you will make when executing.`)
+			details.push(`End your message with the exact line: [[JIRA_PLAN_READY]] so the user can approve execution.`)
+			details.push(`You may use read-only tools (read/search files) to explore the codebase while planning.`)
+		}
+		else if (linkedJiraIssue && jiraWorkflowPhase === 'executing') {
+			details.push(`JIRA EXECUTION for ${linkedJiraIssue.key} (cloudId=${linkedJiraIssue.cloudId}): User approved the plan. Implement in the workspace; Agentic will post the Jira comment and transition when you finish.`)
+			details.push(`Do NOT spend turns on Jira MCP unless code work is blocked — focus on implementation.`)
+			details.push(`When code is done and verified, end your final message with exactly: ${JIRA_WORKFLOW_COMPLETE_MARKER}`)
+			details.push(`Do NOT ask for tool or edit approvals during this phase.`)
+		}
+		else if (linkedJiraIssue) {
+			details.push(`This chat is linked to Jira ticket ${linkedJiraIssue.key}. Use Atlassian MCP tools to read/update that ticket (comments, transitions, fields) as you work.`)
+			details.push(`When you finish implementation, you MUST update Jira: add a comment with what changed and how to verify, then transition the issue to an appropriate status.`)
+		}
+		if (mcpTools?.length && jiraWorkflowPhase !== 'planning') {
+			details.push(`Atlassian MCP tools are available for Jira (search issues, get/edit issue, comments, transitions). Use them when the user asks about Jira tickets or when a ticket is linked to this chat.`)
+		}
 	}
 
 	if (mode === 'gather') {
@@ -512,13 +541,32 @@ Here's an example of a good code block:\n${chatSuggestionDiffExample}`)
 ${details.map((d, i) => `${i + 1}. ${d}`).join('\n\n')}`)
 
 
+	const jiraDesc = linkedJiraIssue
+		? truncateForPrompt(formatRequirementsForUI(linkedJiraIssue.description, JIRA_DESC_PROMPT_MAX), JIRA_DESC_PROMPT_MAX)
+		: ''
+	const jiraInfo = linkedJiraIssue ? (`<linked_jira_ticket>
+- Key: ${linkedJiraIssue.key}
+- Summary: ${linkedJiraIssue.summary}
+- Status: ${linkedJiraIssue.status ?? 'unknown'}
+- Cloud ID: ${linkedJiraIssue.cloudId}
+${jiraWorkflowPhase === 'executing' ? '- Agentic updates Jira automatically when you send the completion marker.' : ''}
+
+Requirements:
+${jiraDesc}
+</linked_jira_ticket>`) : null
+
 	// return answer
 	const ansStrs: string[] = []
 	ansStrs.push(header)
 	ansStrs.push(sysInfo)
+	if (jiraInfo) ansStrs.push(jiraInfo)
 	if (toolDefinitions) ansStrs.push(toolDefinitions)
 	ansStrs.push(importantDetails)
-	ansStrs.push(fsInfo)
+	if (jiraWorkflowPhase === 'planning' || jiraWorkflowPhase === 'executing') {
+		ansStrs.push(`<files_overview>\n(Directory tree omitted during Jira workflow — use ls_dir / search tools.)\n</files_overview>`)
+	} else {
+		ansStrs.push(fsInfo)
+	}
 
 	const fullSystemMsgStr = ansStrs
 		.join('\n\n\n')

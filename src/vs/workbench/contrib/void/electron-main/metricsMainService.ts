@@ -125,7 +125,7 @@ export class MetricsMainService extends Disposable implements IMetricsService {
 
 		const didOptOut = this._appStorage.getBoolean(OPT_OUT_KEY, StorageScope.APPLICATION, false)
 
-		console.log('User is opted out of basic Void metrics?', didOptOut)
+		console.log('User is opted out of basic Agentic metrics?', didOptOut)
 		if (didOptOut) {
 			this.client.optOut()
 		}
@@ -135,7 +135,7 @@ export class MetricsMainService extends Disposable implements IMetricsService {
 		}
 
 
-		console.log('Void posthog metrics info:', JSON.stringify(identifyMessage, null, 2))
+		console.log('Agentic posthog metrics info:', JSON.stringify(identifyMessage, null, 2))
 	}
 
 
