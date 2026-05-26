@@ -30,5 +30,5 @@ mcp.json
 .tmp/
 .tmp2/
 .tool-versions
-src/vs/workbench/contrib/void/browser/react/out/**
-src/vs/workbench/contrib/void/browser/react/src2/**
+src/vs/workbench/contrib/agentic/browser/react/out/**
+src/vs/workbench/contrib/agentic/browser/react/src2/**

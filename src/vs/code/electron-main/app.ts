@@ -125,14 +125,14 @@ import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetr
 
 // in theory this is not allowed
 // ignore the eslint errors below
-import { IMetricsService } from '../../workbench/contrib/void/common/metricsService.js';
-import { IVoidUpdateService } from '../../workbench/contrib/void/common/voidUpdateService.js';
-import { MetricsMainService } from '../../workbench/contrib/void/electron-main/metricsMainService.js';
-import { VoidMainUpdateService } from '../../workbench/contrib/void/electron-main/voidUpdateMainService.js';
-import { LLMMessageChannel } from '../../workbench/contrib/void/electron-main/sendLLMMessageChannel.js';
-import { VoidSCMService } from '../../workbench/contrib/void/electron-main/voidSCMMainService.js';
-import { IVoidSCMService } from '../../workbench/contrib/void/common/voidSCMTypes.js';
-import { MCPChannel } from '../../workbench/contrib/void/electron-main/mcpChannel.js';
+import { IMetricsService } from '../../workbench/contrib/agentic/common/metricsService.js';
+import { IAgenticUpdateService } from '../../workbench/contrib/agentic/common/agenticUpdateService.js';
+import { MetricsMainService } from '../../workbench/contrib/agentic/electron-main/metricsMainService.js';
+import { AgenticMainUpdateService } from '../../workbench/contrib/agentic/electron-main/agenticUpdateMainService.js';
+import { LLMMessageChannel } from '../../workbench/contrib/agentic/electron-main/sendLLMMessageChannel.js';
+import { AgenticSCMService } from '../../workbench/contrib/agentic/electron-main/agenticSCMMainService.js';
+import { IAgenticSCMService } from '../../workbench/contrib/agentic/common/agenticSCMTypes.js';
+import { MCPChannel } from '../../workbench/contrib/agentic/electron-main/mcpChannel.js';
 /**
  * The main VS Code application. There will only ever be one instance,
  * even if the user starts many instances (e.g. from the command line).
@@ -1101,10 +1101,10 @@ export class CodeApplication extends Disposable {
 			services.set(ITelemetryService, NullTelemetryService);
 		}
 
-		// Void main process services (required for services with a channel for comm between browser and electron-main (node))
+		// Agentic main process services (required for services with a channel for comm between browser and electron-main (node))
 		services.set(IMetricsService, new SyncDescriptor(MetricsMainService, undefined, false));
-		services.set(IVoidUpdateService, new SyncDescriptor(VoidMainUpdateService, undefined, false));
-		services.set(IVoidSCMService, new SyncDescriptor(VoidSCMService, undefined, false));
+		services.set(IAgenticUpdateService, new SyncDescriptor(AgenticMainUpdateService, undefined, false));
+		services.set(IAgenticSCMService, new SyncDescriptor(AgenticSCMService, undefined, false));
 
 		// Default Extensions Profile Init
 		services.set(IExtensionsProfileScannerService, new SyncDescriptor(ExtensionsProfileScannerService, undefined, true));
@@ -1236,23 +1236,23 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel('logger', loggerChannel);
 		sharedProcessClient.then(client => client.registerChannel('logger', loggerChannel));
 
-		// Void - use loggerChannel as reference
+		// Agentic - use loggerChannel as reference
 		const metricsChannel = ProxyChannel.fromService(accessor.get(IMetricsService), disposables);
-		mainProcessElectronServer.registerChannel('void-channel-metrics', metricsChannel);
+		mainProcessElectronServer.registerChannel('agentic-channel-metrics', metricsChannel);
 
-		const voidUpdatesChannel = ProxyChannel.fromService(accessor.get(IVoidUpdateService), disposables);
-		mainProcessElectronServer.registerChannel('void-channel-update', voidUpdatesChannel);
+		const agenticUpdatesChannel = ProxyChannel.fromService(accessor.get(IAgenticUpdateService), disposables);
+		mainProcessElectronServer.registerChannel('agentic-channel-update', agenticUpdatesChannel);
 
 		const sendLLMMessageChannel = new LLMMessageChannel(accessor.get(IMetricsService));
-		mainProcessElectronServer.registerChannel('void-channel-llmMessage', sendLLMMessageChannel);
+		mainProcessElectronServer.registerChannel('agentic-channel-llmMessage', sendLLMMessageChannel);
 
-		// Void added this
-		const voidSCMChannel = ProxyChannel.fromService(accessor.get(IVoidSCMService), disposables);
-		mainProcessElectronServer.registerChannel('void-channel-scm', voidSCMChannel);
+		// Agentic added this
+		const agenticSCMChannel = ProxyChannel.fromService(accessor.get(IAgenticSCMService), disposables);
+		mainProcessElectronServer.registerChannel('agentic-channel-scm', agenticSCMChannel);
 
-		// Void added this
+		// Agentic added this
 		const mcpChannel = new MCPChannel();
-		mainProcessElectronServer.registerChannel('void-channel-mcp', mcpChannel);
+		mainProcessElectronServer.registerChannel('agentic-channel-mcp', mcpChannel);
 
 		// Extension Host Debug Broadcasting
 		const electronExtensionHostDebugBroadcastChannel = new ElectronExtensionHostDebugBroadcastChannel(accessor.get(IWindowsMainService));

@@ -260,7 +260,8 @@
 	background-image: url('../../../media/code-icon.svg');
 	background-repeat: no-repeat;
 	background-position: center center;
-	background-size: 16px;
+	background-size: auto 14px;
+	color: var(--vscode-titleBar-activeForeground);
 }
 
 .monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left > .window-appicon.codicon {

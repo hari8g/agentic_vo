@@ -68,6 +68,8 @@ const vscodeResourceIncludes = [
 
 	// Touchbar
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
+	'out-build/vs/workbench/browser/media/*.png',
+	'out-build/vs/workbench/contrib/agentic/browser/media/*.png',
 	'out-build/vs/workbench/contrib/debug/browser/media/*.png',
 
 	// External Terminal

@@ -20,12 +20,16 @@ import { IHostService } from '../../../services/host/browser/host.js';
 import { ILabelService, Verbosity } from '../../../../platform/label/common/label.js';
 import { ColorScheme } from '../../web.api.js';
 import { OpenFileFolderAction, OpenFolderAction } from '../../actions/workspaceActions.js';
+import { FileAccess } from '../../../../base/common/network.js';
 import { IWindowOpenable } from '../../../../platform/window/common/window.js';
+
+const MPS_LOGO_DARK_URI = FileAccess.asBrowserUri('vs/workbench/browser/parts/editor/media/mps-logo-dark.png').toString(true);
+const MPS_LOGO_LIGHT_URI = FileAccess.asBrowserUri('vs/workbench/browser/parts/editor/media/mps-logo-light.png').toString(true);
 import { splitRecentLabel } from '../../../../base/common/labels.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 
 /* eslint-disable */ // Agentic
-import { VOID_CTRL_K_ACTION_ID, VOID_CTRL_L_ACTION_ID } from '../../../contrib/void/browser/actionIDs.js';
+import { AGENTIC_CTRL_K_ACTION_ID, AGENTIC_CTRL_L_ACTION_ID } from '../../../contrib/agentic/browser/actionIDs.js';
 import { VIEWLET_ID as REMOTE_EXPLORER_VIEWLET_ID } from '../../../contrib/remote/browser/remoteExplorer.js';
 /* eslint-enable */
 
@@ -111,13 +115,17 @@ export class EditorGroupWatermark extends Disposable {
 		append(container, elements.root);
 		this.shortcuts = elements.shortcuts; // shortcuts div is modified on render()
 
-		// void icon style
 		const updateTheme = () => {
 			const theme = this.themeService.getColorTheme().type
 			const isDark = theme === ColorScheme.DARK || theme === ColorScheme.HIGH_CONTRAST_DARK
-			elements.icon.style.maxWidth = '220px'
-			elements.icon.style.opacity = '50%'
-			elements.icon.style.filter = isDark ? '' : 'invert(1)' //brightness(.5)
+			elements.icon.style.maxWidth = '100%'
+			elements.icon.style.aspectRatio = '1 / 1'
+			elements.icon.style.backgroundImage = `url("${isDark ? MPS_LOGO_DARK_URI : MPS_LOGO_LIGHT_URI}")`
+			elements.icon.style.backgroundSize = 'contain'
+			elements.icon.style.backgroundPosition = 'center'
+			elements.icon.style.backgroundRepeat = 'no-repeat'
+			elements.icon.style.opacity = '0.92'
+			elements.icon.style.filter = 'none'
 		}
 		updateTheme()
 		this._register(
@@ -161,7 +169,7 @@ export class EditorGroupWatermark extends Disposable {
 	private render(): void {
 
 		this.clear();
-		const voidIconBox = append(this.shortcuts, $('.watermark-box'));
+		const agenticIconBox = append(this.shortcuts, $('.watermark-box'));
 		const recentsBox = append(this.shortcuts, $('div'));
 		recentsBox.style.display = 'flex'
 		recentsBox.style.flex = 'row'
@@ -174,7 +182,7 @@ export class EditorGroupWatermark extends Disposable {
 			const recentlyOpened = await this.workspacesService.getRecentlyOpened()
 				.catch(() => ({ files: [], workspaces: [] })).then(w => w.workspaces);
 
-			clearNode(voidIconBox);
+			clearNode(agenticIconBox);
 			clearNode(recentsBox);
 
 			this.currentDisposables.forEach(label => label.dispose());
@@ -191,11 +199,11 @@ export class EditorGroupWatermark extends Disposable {
 				buttonContainer.style.alignItems = 'center'; // Center the buttons horizontally
 				buttonContainer.style.gap = '8px'; // Reduce gap between buttons from 16px to 8px
 				buttonContainer.style.marginBottom = '16px';
-				voidIconBox.appendChild(buttonContainer);
+				agenticIconBox.appendChild(buttonContainer);
 
 				// Open a folder
 				const openFolderButton = h('button')
-				openFolderButton.root.classList.add('void-openfolder-button')
+				openFolderButton.root.classList.add('agentic-openfolder-button')
 				openFolderButton.root.style.display = 'block'
 				openFolderButton.root.style.width = '124px' // Set width to 124px as requested
 				openFolderButton.root.textContent = 'Open Folder'
@@ -211,7 +219,7 @@ export class EditorGroupWatermark extends Disposable {
 
 				// Open SSH button
 				const openSSHButton = h('button')
-				openSSHButton.root.classList.add('void-openssh-button')
+				openSSHButton.root.classList.add('agentic-openssh-button')
 				openSSHButton.root.style.display = 'block'
 				openSSHButton.root.style.backgroundColor = '#5a5a5a' // Made darker than the default gray
 				openSSHButton.root.style.width = '124px' // Set width to 124px as requested
@@ -225,7 +233,7 @@ export class EditorGroupWatermark extends Disposable {
 				// Recents
 				if (recentlyOpened.length !== 0) {
 
-					voidIconBox.append(
+					agenticIconBox.append(
 						...recentlyOpened.map((w, i) => {
 
 							let fullPath: string;
@@ -244,7 +252,7 @@ export class EditorGroupWatermark extends Disposable {
 							const { name, parentPath } = splitRecentLabel(fullPath);
 
 							const linkSpan = $('span');
-							linkSpan.classList.add('void-link')
+							linkSpan.classList.add('agentic-link')
 							linkSpan.style.display = 'flex'
 							linkSpan.style.gap = '4px'
 							linkSpan.style.padding = '8px'
@@ -284,8 +292,8 @@ export class EditorGroupWatermark extends Disposable {
 			else {
 
 				// show them Agentic keybindings
-				const keys = this.keybindingService.lookupKeybinding(VOID_CTRL_L_ACTION_ID);
-				const dl = append(voidIconBox, $('dl'));
+				const keys = this.keybindingService.lookupKeybinding(AGENTIC_CTRL_L_ACTION_ID);
+				const dl = append(agenticIconBox, $('dl'));
 				const dt = append(dl, $('dt'));
 				dt.textContent = 'Chat'
 				const dd = append(dl, $('dd'));
@@ -295,8 +303,8 @@ export class EditorGroupWatermark extends Disposable {
 				this.currentDisposables.add(label);
 
 
-				const keys2 = this.keybindingService.lookupKeybinding(VOID_CTRL_K_ACTION_ID);
-				const dl2 = append(voidIconBox, $('dl'));
+				const keys2 = this.keybindingService.lookupKeybinding(AGENTIC_CTRL_K_ACTION_ID);
+				const dl2 = append(agenticIconBox, $('dl'));
 				const dt2 = append(dl2, $('dt'));
 				dt2.textContent = 'Quick Edit'
 				const dd2 = append(dl2, $('dd'));
@@ -311,13 +319,13 @@ export class EditorGroupWatermark extends Disposable {
 				// button3.style.display = 'block'
 				// button3.style.marginLeft = 'auto'
 				// button3.style.marginRight = 'auto'
-				// button3.classList.add('void-settings-watermark-button')
+				// button3.classList.add('agentic-settings-watermark-button')
 
 				// const label3 = new KeybindingLabel(button3, OS, { renderUnboundKeybindings: true, ...defaultKeybindingLabelStyles });
 				// if (keys3)
 				// 	label3.set(keys3);
 				// button3.onclick = () => {
-				// 	this.commandService.executeCommand(VOID_OPEN_SETTINGS_ACTION_ID)
+				// 	this.commandService.executeCommand(AGENTIC_OPEN_SETTINGS_ACTION_ID)
 				// }
 				// this.currentDisposables.add(label3);
 
