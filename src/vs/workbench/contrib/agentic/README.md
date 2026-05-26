@@ -2,7 +2,7 @@
 
 Full architecture, workflow, build/run, and file-by-file documentation:
 
-**[`contributing/agentic/README.md`](../../../../../../contributing/agentic/README.md)** (repo root relative: `contributing/agentic/README.md`)
+**[`contributing/agentic/README.md`](../../../../../../contributing/agentic/README.md)** (from repo root: `void/contributing/agentic/README.md`)
 
 Quick dev commands (from `void/`):
 
